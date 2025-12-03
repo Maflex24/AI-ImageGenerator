@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Generowanie obrazów - OpenAI</title>
+<style>
+	body { font-family: Arial, Helvetica, sans-serif; padding: 20px; max-width: 900px; margin: auto; }
+	label { display:block; margin-top:10px; font-weight:600; }
+	textarea { width:100%; height:100px; }
+	select,input[type="number"],input[type="password"] { padding:6px; }
+	button { margin-top:12px; padding:8px 12px; }
+	#results { margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; }
+	.card { border:1px solid #ddd; padding:8px; width:220px; text-align:center; }
+	.card img { max-width:100%; height:auto; display:block; margin-bottom:8px; }
+	.small { font-size:0.9rem; color:#555; }
+</style>
+</head>
+<body>
+	<h1>Generuj obraz (OpenAI)</h1>
+
+	<label>OpenAI API Key</label>
+	<input id="apiKey" type="password" placeholder="Wklej tutaj swój klucz (skrócony/bezpiecznie)" style="width:100%" />
+
+	<label>Prompt</label>
+	<textarea id="prompt" placeholder="Napisz opis obrazu, np. 'A futuristic city at sunset, vibrant colors'"></textarea>
+
+	<label>Rozmiar</label>
+	<select id="size">
+		<option value="256x256">256x256</option>
+		<option value="512x512" selected>512x512</option>
+		<option value="1024x1024">1024x1024</option>
+	</select>
+
+	<label>Liczba obrazów (1-4)</label>
+	<input id="n" type="number" min="1" max="4" value="1" />
+
+	<button id="generate">Generuj obraz</button>
+	<div id="status" class="small"></div>
+
+	<div id="results"></div>
+
+<script>
+const btn = document.getElementById('generate');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+
+function clearResults() {
+	resultsEl.innerHTML = '';
+}
+
+function createCard(imgSrc, filename, sourceUrl) {
+	const card = document.createElement('div');
+	card.className = 'card';
+	const img = document.createElement('img');
+	img.src = imgSrc;
+	card.appendChild(img);
+
+	const dl = document.createElement('a');
+	dl.textContent = 'Pobierz';
+	dl.style.display = 'inline-block';
+	dl.style.marginRight = '8px';
+
+	if (imgSrc.startsWith('data:') || sourceUrl === null) {
+		dl.href = imgSrc;
+		dl.download = filename;
+	}
+	else {
+		dl.href = sourceUrl;
+		dl.target = '_blank';
+	}
+
+	card.appendChild(dl);
+
+	const view = document.createElement('a');
+	view.textContent = 'Otwórz';
+	view.style.marginLeft = '4px';
+	view.href = imgSrc;
+	view.target = '_blank';
+	card.appendChild(view);
+
+	return card;
+}
+
+btn.addEventListener('click', async () => {
+	const apiKey = document.getElementById('apiKey').value.trim();
+	const prompt = document.getElementById('prompt').value.trim();
+	const size = document.getElementById('size').value;
+	const n = Math.min(4, Math.max(1, parseInt(document.getElementById('n').value || '1')));
+
+	if (!apiKey) {
+		statusEl.textContent = 'Wklej klucz OpenAI w polu "OpenAI API Key".';
+		return;
+	}
+
+	if (!prompt) {
+		statusEl.textContent = 'Wpisz prompt.';
+		return;
+	}
+
+	btn.disabled = true;
+	statusEl.textContent = 'Wysyłam żądanie...';
+	clearResults();
+
+	try {
+		const url = 'https://api.openai.com/v1/images/generations';
+		const body = {
+			model: 'gpt-image-1',
+			prompt: prompt,
+			size: size,
+			n: n
+		};
+
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				'Authorization': `Bearer ${apiKey}`
+			},
+			body: JSON.stringify(body)
+		});
+
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error('Błąd API: ' + res.status + ' — ' + text);
+		}
+
+		const data = await res.json();
+
+		if (!data || !data.data || !Array.isArray(data.data) || data.data.length === 0) {
+			throw new Error('Brak wygenerowanych danych w odpowiedzi.');
+		}
+
+		statusEl.textContent = 'Obrazy wygenerowane.';
+
+		data.data.forEach((item, idx) => {
+			let imgSrc = '';
+			let sourceUrl = null;
+
+			if (item.b64_json) {
+				imgSrc = 'data:image/png;base64,' + item.b64_json;
+			}
+			else if (item.url) {
+				imgSrc = item.url;
+				sourceUrl = item.url;
+			}
+			else {
+				return;
+			}
+
+			const filename = `openai_image_${Date.now()}_${idx+1}.png`;
+			const card = createCard(imgSrc, filename, sourceUrl);
+			resultsEl.appendChild(card);
+		});
+	}
+	catch (err) {
+		console.error(err);
+		statusEl.textContent = 'Błąd: ' + (err.message || err);
+	}
+	finally {
+		btn.disabled = false;
+	}
+});
+</script>
+</body>
+</html>
