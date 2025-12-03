@@ -1,49 +1,84 @@
-<!DOCTYPE html>
-<html lang="pl">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Generowanie obrazów - OpenAI</title>
-<style>
-	body { font-family: Arial, Helvetica, sans-serif; padding: 20px; max-width: 900px; margin: auto; }
-	label { display:block; margin-top:10px; font-weight:600; }
-	textarea { width:100%; height:100px; }
-	select,input[type="number"],input[type="password"] { padding:6px; }
-	button { margin-top:12px; padding:8px 12px; }
-	#results { margin-top:18px; display:flex; flex-wrap:wrap; gap:12px; }
-	.card { border:1px solid #ddd; padding:8px; width:220px; text-align:center; }
-	.card img { max-width:100%; height:auto; display:block; margin-bottom:8px; }
-	.small { font-size:0.9rem; color:#555; }
-</style>
-</head>
-<body>
-	<h1>Generuj obraz (OpenAI)</h1>
+<label>OpenAI API Key</label>
+<input id="apiKey" type="password" placeholder="Wklej tutaj swój klucz (jeśli używasz bezpośrednio)" style="width:100%" />
 
-	<label>OpenAI API Key</label>
-	<input id="apiKey" type="password" placeholder="Wklej tutaj swój klucz (skrócony/bezpiecznie)" style="width:100%" />
+<label>Model</label>
+<select id="model">
+	<option value="gpt-image-1" selected>gpt-image-1</option>
+	<option value="gpt-image-1-mini">gpt-image-1-mini</option>
+	<option value="dall-e-2">dall-e-2</option>
+	<option value="dall-e-3">dall-e-3</option>
+</select>
 
-	<label>Prompt</label>
-	<textarea id="prompt" placeholder="Napisz opis obrazu, np. 'A futuristic city at sunset, vibrant colors'"></textarea>
+<label>Prompt</label>
+<textarea id="prompt" placeholder="Napisz opis obrazu, np. 'A futuristic city at sunset, vibrant colors'"></textarea>
 
-	<label>Rozmiar</label>
-	<select id="size">
-		<option value="256x256">256x256</option>
-		<option value="512x512" selected>512x512</option>
-		<option value="1024x1024">1024x1024</option>
-	</select>
+<label>Rozmiar</label>
+<select id="size"></select>
 
-	<label>Liczba obrazów (1-4)</label>
-	<input id="n" type="number" min="1" max="4" value="1" />
+<label>Jakość</label>
+<select id="quality">
+	<option value="standard">Standard</option>
+	<option value="high">Wysoka (HD)</option>
+</select>
 
-	<button id="generate">Generuj obraz</button>
-	<div id="status" class="small"></div>
+<label>Liczba obrazów (1-10)</label>
+<input id="n" type="number" min="1" max="10" value="1" />
 
-	<div id="results"></div>
+<label><input id="useProxy" type="checkbox" /> Użyj serwera pośredniczącego (bez ujawniania klucza)</label>
+
+<button id="generate">Generuj obraz</button>
+<div id="status" class="small"></div>
+<div id="results"></div>
 
 <script>
 const btn = document.getElementById('generate');
 const statusEl = document.getElementById('status');
 const resultsEl = document.getElementById('results');
+
+const modelSelect = document.getElementById('model');
+const sizeSelect = document.getElementById('size');
+const qualitySelect = document.getElementById('quality');
+const useProxyCheckbox = document.getElementById('useProxy');
+
+const modelsConfig = {
+	"gpt-image-1": {
+		sizes: ['1024x1024','1536x1024','1024x1536'],
+		qualities: ['standard','high']
+	},
+	"gpt-image-1-mini": {
+		sizes: ['512x512','1024x1024'],
+		qualities: ['standard']
+	},
+	"dall-e-2": {
+		sizes: ['256x256','512x512','1024x1024'],
+		qualities: ['standard']
+	},
+	"dall-e-3": {
+		sizes: ['1024x1024','1792x1024','1024x1792'],
+		qualities: ['standard','high']
+	}
+};
+
+function updateSizeAndQuality() {
+	const cfg = modelsConfig[modelSelect.value] || modelsConfig['gpt-image-1'];
+	sizeSelect.innerHTML = '';
+	cfg.sizes.forEach(s => {
+		const o = document.createElement('option');
+		o.value = s;
+		o.textContent = s;
+		sizeSelect.appendChild(o);
+	});
+	qualitySelect.innerHTML = '';
+	cfg.qualities.forEach(q => {
+		const o = document.createElement('option');
+		o.value = q;
+		o.textContent = q === 'high' ? 'Wysoka (HD)' : 'Standard';
+		qualitySelect.appendChild(o);
+	});
+}
+
+updateSizeAndQuality();
+modelSelect.addEventListener('change', updateSizeAndQuality);
 
 function clearResults() {
 	resultsEl.innerHTML = '';
@@ -85,16 +120,19 @@ function createCard(imgSrc, filename, sourceUrl) {
 btn.addEventListener('click', async () => {
 	const apiKey = document.getElementById('apiKey').value.trim();
 	const prompt = document.getElementById('prompt').value.trim();
-	const size = document.getElementById('size').value;
-	const n = Math.min(4, Math.max(1, parseInt(document.getElementById('n').value || '1')));
-
-	if (!apiKey) {
-		statusEl.textContent = 'Wklej klucz OpenAI w polu "OpenAI API Key".';
-		return;
-	}
+	const model = modelSelect.value;
+	const size = sizeSelect.value;
+	const quality = qualitySelect.value;
+	const n = Math.min(10, Math.max(1, parseInt(document.getElementById('n').value || '1')));
+	const useProxy = useProxyCheckbox.checked;
 
 	if (!prompt) {
 		statusEl.textContent = 'Wpisz prompt.';
+		return;
+	}
+
+	if (!useProxy && !apiKey) {
+		statusEl.textContent = 'Wklej klucz OpenAI (lub włącz "Użyj serwera pośredniczącego").';
 		return;
 	}
 
@@ -103,22 +141,41 @@ btn.addEventListener('click', async () => {
 	clearResults();
 
 	try {
-		const url = 'https://api.openai.com/v1/images/generations';
-		const body = {
-			model: 'gpt-image-1',
+		let url;
+		let fetchOptions;
+
+		// Payload, możesz rozszerzyć o dodatkowe pola jeśli dany model je obsługuje
+		const payload = {
+			model: model,
 			prompt: prompt,
+			n: n,
 			size: size,
-			n: n
+			quality: quality
 		};
 
-		const res = await fetch(url, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-				'Authorization': `Bearer ${apiKey}`
-			},
-			body: JSON.stringify(body)
-		});
+		if (useProxy) {
+			// Wyślij do twojego PHP proxy — on powinien trzymać klucz w ENV
+			url = './generate-image.php';
+			fetchOptions = {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(payload)
+			};
+		}
+		else {
+			// Bezpośrednie wywołanie OpenAI z kluczem w przeglądarce (niezalecane dla produkcji)
+			url = 'https://api.openai.com/v1/images/generations';
+			fetchOptions = {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${apiKey}`
+				},
+				body: JSON.stringify(payload)
+			};
+		}
+
+		const res = await fetch(url, fetchOptions);
 
 		if (!res.ok) {
 			const text = await res.text();
@@ -127,13 +184,25 @@ btn.addEventListener('click', async () => {
 
 		const data = await res.json();
 
-		if (!data || !data.data || !Array.isArray(data.data) || data.data.length === 0) {
+		// Obsługa możliwych formatów odpowiedzi: data[].b64_json lub data[].url
+		const items = data.data || data.images || [];
+		if (!Array.isArray(items) || items.length === 0) {
+			// czasem proxy zwraca { images: [...] }
+			if (Array.isArray(data.images)) {
+				data.images.forEach((urlStr, idx) => {
+					const filename = `openai_image_${Date.now()}_${idx+1}.png`;
+					const card = createCard(urlStr, filename, urlStr);
+					resultsEl.appendChild(card);
+				});
+				statusEl.textContent = 'Obrazy wygenerowane.';
+				return;
+			}
 			throw new Error('Brak wygenerowanych danych w odpowiedzi.');
 		}
 
 		statusEl.textContent = 'Obrazy wygenerowane.';
 
-		data.data.forEach((item, idx) => {
+		items.forEach((item, idx) => {
 			let imgSrc = '';
 			let sourceUrl = null;
 
@@ -143,6 +212,10 @@ btn.addEventListener('click', async () => {
 			else if (item.url) {
 				imgSrc = item.url;
 				sourceUrl = item.url;
+			}
+			else if (typeof item === 'string') {
+				imgSrc = item;
+				sourceUrl = item;
 			}
 			else {
 				return;
@@ -162,5 +235,3 @@ btn.addEventListener('click', async () => {
 	}
 });
 </script>
-</body>
-</html>
